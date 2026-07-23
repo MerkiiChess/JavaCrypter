@@ -9,6 +9,7 @@ build/
 .idea/modules.xml
 .idea/jarRepositories.xml
 .idea/compiler.xml
+.idea/vcs.xml
 .idea/libraries/
 *.iws
 *.iml
@@ -41,3 +42,9 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### JarProtector output ###
+# jars people drop in the repo root for local testing, plus whatever protect/
+# export-assets produces from them
+*_crypted.jar
+*_assetsExported.jar
