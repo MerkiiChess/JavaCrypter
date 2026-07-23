@@ -209,14 +209,9 @@ final class JarProtector {
 
     private List<OpcodeSubstitution> buildOpcodeTable() {
         List<OpcodeSubstitution> table = new ArrayList<>();
-        table.add(new OpcodeSubstitution("return", Opcodes.RETURN, 247));
-        table.add(new OpcodeSubstitution("areturn", Opcodes.ARETURN, 248));
-        table.add(new OpcodeSubstitution("aconst_null", Opcodes.ACONST_NULL, 246));
-        table.add(new OpcodeSubstitution("pop", Opcodes.POP, 245));
-        table.add(new OpcodeSubstitution("invokevirtual", Opcodes.INVOKEVIRTUAL, 243));
-        table.add(new OpcodeSubstitution("dup", Opcodes.DUP, 242));
-        table.add(new OpcodeSubstitution("bipush", Opcodes.BIPUSH, 241));
-        table.add(new OpcodeSubstitution("invokespecial", Opcodes.INVOKESPECIAL, 244));
+        for (OpcodeTable.Entry entry : OpcodeTable.entries()) {
+            table.add(new OpcodeSubstitution(entry.mnemonic(), entry.originalOpcode(), entry.substituteOpcode()));
+        }
         return table;
     }
 

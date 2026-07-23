@@ -14,11 +14,11 @@ Classes are also written out in a different order than they came in (ranked by
 inheritance depth instead of the source jar's original layout), so a naive diff
 against the original jar doesn't line up entry for entry.
 
-This is meant to run as the build-time half of a licensing/anti-tamper setup: you
-pair it with a custom JVM that understands the substituted opcodes and ship that
-JVM to your licensed users. It is **not** an antivirus-evasion tool and it does not
-try to defeat someone who can attach a debugger to your custom JVM - it raises the
-cost of casual decompilation, nothing more.
+This is the build-time half of a licensing/anti-tamper setup. The runtime half - the
+thing that lets a protected jar actually run - is a small Java agent shipped in the
+same repo (`ru.merkii.crypt.agent`), not a patched JVM. It is **not** an antivirus-evasion
+tool and it does not try to defeat someone who can attach a debugger to the agent - it
+raises the cost of casual decompilation, nothing more.
 
 ## How it works
 
@@ -40,15 +40,38 @@ input.jar
                                               + key.bin (AES key for this run)
 ```
 
-The opcode table is fixed and lives in `JarProtector.buildOpcodeTable()` - it has to
-match whatever your custom JVM expects, so it's intentionally not randomized between
-runs.
+The mapping itself lives in `OpcodeTable`, shared by both sides so they can't drift
+apart, and it's intentionally not randomized between runs.
+
+## Running a protected jar
+
+A jar produced by `protect` fails to load on a stock JVM - the verifier rejects the
+substituted opcodes outright (`VerifyError: Bad instruction`), before your code ever
+runs. To actually run it, attach the reversal agent built by this project:
+
+```
+java -javaagent:JavaCrypter-<version>-agent.jar[=some/package/prefix/] -jar app_crypted.jar
+```
+
+The agent hooks `java.lang.instrument.ClassFileTransformer` and, for every class
+whose name matches the given prefix (or every application class if you don't pass
+one), restores the substituted opcodes back to their real values *before* the JVM's
+own class-file verifier looks at the bytes. Everything after that - verification,
+interpretation, JIT compilation - runs completely unmodified on a normal OpenJDK
+build. No JVM source patching, no per-platform native builds.
+
+ASM itself can't be used for this - it throws while decoding the very first
+instruction it doesn't recognize - so the agent has its own minimal, ASM-free
+class-file reader (`RawClassFile`) that walks the JVM spec's per-opcode instruction
+layout by hand just far enough to find and byte-swap the substituted opcodes back.
+Since substitution never changes an instruction's length, this is a pure in-place
+patch - nothing else in the class file needs to move or be resized.
 
 ## Requirements
 
-- Java 21+
-- A custom JVM build that recognizes the substituted opcodes. This repo only
-  produces the protected jar; the JVM side is out of scope here.
+- Java 21+ for building/running this project.
+- Whatever JVM the *protected app* targets just needs to be a stock JDK with the
+  reversal agent attached - see above.
 
 ## Usage
 
@@ -71,13 +94,18 @@ ru.merkii.crypt
 ├── Main.java              CLI entry point, dispatches to the two commands
 ├── JarProtector.java       core: opcode substitution, string encryption, class ordering
 ├── AssetExporter.java      export-assets command
-├── OpcodeSubstitution.java one entry in the opcode remap table
+├── OpcodeTable.java        the substitution mapping - shared by JarProtector and the agent
+├── OpcodeSubstitution.java one entry in the opcode remap table, with an applied-count
 ├── ClassPair.java          class + write-order priority, used to sort before writing
 ├── IoUtil.java             stream copy helper
-└── crypt/
-    ├── StringEncryptor.java   build-time AES-GCM encryption
-    ├── StringDecryptor.java   embedded verbatim into every protected jar
-    └── EncryptionStats.java   tracks what got encrypted, for the summary printout
+├── crypt/
+│   ├── StringEncryptor.java   build-time AES-GCM encryption
+│   ├── StringDecryptor.java   embedded verbatim into every protected jar
+│   └── EncryptionStats.java   tracks what got encrypted, for the summary printout
+└── agent/                  packaged separately as <artifact>-agent.jar, see above
+    ├── OpcodeRestoringAgent.java   premain entry point, registers the transformer
+    ├── RawClassFile.java          hand-rolled class-file reader/patcher (no ASM)
+    └── ReverseOpcodeMap.java      OpcodeTable, inverted for restoration
 ```
 
 ## Testing
@@ -96,11 +124,18 @@ being unparseable by stock tooling is the whole point.
 `StringEncryptorTest` covers the AES round trip and confirms encrypting the same
 string twice never produces the same ciphertext (fresh nonce per call).
 
+`RawClassFileTest` runs the whole pipeline end to end: builds a class with a
+`lookupswitch` and a substituted `bipush` in the same method (to make sure the
+agent's walker steps over the switch's padding/table correctly before it gets back
+to spotting substituted opcodes), protects it through the real `Main` → `JarProtector`
+path, restores it with `RawClassFile`, then actually loads and executes the result -
+not just diffs bytes - to prove the round trip produces working code.
+
 ## Notes on the string encryption
 
 The AES key travels inside the output jar (`key.bin`, next to `StringDecryptor.class`)
 so the protected app can decrypt its own strings at runtime. That's the standard
 tradeoff for any client-side protection scheme - it stops someone from just grepping
 the jar for strings, but the key is reachable by anyone willing to unzip the jar and
-read it. The real protection is meant to come from the paired custom JVM, not from
-hiding the key.
+read it. Similarly, the agent's own jar is a plain, readable Java program, so someone
+could recover the opcode mapping by decompiling it (tracked as issue #4).

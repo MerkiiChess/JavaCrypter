@@ -31,3 +31,21 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+// The reversal agent ships as its own small, ASM-free jar - it's meant to sit
+// next to a protected app and be attached with -javaagent, not to be part of
+// this tool's own CLI jar.
+val agentJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("agent")
+    from(sourceSets.main.get().output) {
+        include("ru/merkii/crypt/agent/**")
+        include("ru/merkii/crypt/OpcodeTable*.class")
+    }
+    manifest {
+        attributes("Premain-Class" to "ru.merkii.crypt.agent.OpcodeRestoringAgent")
+    }
+}
+
+tasks.build {
+    dependsOn(agentJar)
+}
